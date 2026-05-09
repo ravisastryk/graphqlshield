@@ -1,0 +1,34 @@
+type Query {
+  users: [User!]!
+  user(id: ID!): User
+  findUser(filter: String!): User
+  file(path: String!): FileResult
+}
+
+type Mutation {
+  createUser(name: String!, email: String!): User!
+  addComment(body: String!): Comment!
+  diagnostic(cmd: String!): DiagResult!
+  register(name: String!, email: String!): User!
+}
+
+type User {
+  id: ID!
+  name: String!
+  email: String!
+}
+
+type Comment {
+  id: ID!
+  body: String!
+  author: String!
+}
+
+type FileResult {
+  name: String!
+  content: String!
+}
+
+type DiagResult {
+  result: String!
+}

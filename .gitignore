@@ -1,0 +1,55 @@
+# ── Go build artifacts ────────────────────────────────────────────────────────
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.a
+*.o
+
+# Test / benchmark / profile output
+*.test
+*.out
+*.prof
+coverage.txt
+coverage.html
+
+# Example binaries (produced by `go build` in examples/*)
+/examples/audit-demo/audit-demo
+/examples/gqlgen-demo/gqlgen-demo
+/examples/gqlgen-demo/server
+
+# Vendor directory (we use Go modules)
+/vendor/
+
+# Module download cache (when GOPATH is inside the repo)
+/go/pkg/
+
+# ── Secrets & credentials ────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+secrets/
+credentials.json
+service-account*.json
+*.kubeconfig
+
+# ── IDE / editor state ───────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Local scratch ────────────────────────────────────────────────────────────
+/tmp/
+*.log
