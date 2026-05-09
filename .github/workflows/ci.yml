@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (Go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 1.26 matches go.mod; tip catches regressions ahead of release.
+        go: ['1.26', 'stable']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go ${{ matrix.go }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test (race + coverage)
+        run: go test ./... -race -count=1 -coverprofile=coverage.out
+
+      - name: Build examples
+        run: |
+          set -euo pipefail
+          go build ./...
+          (cd examples/audit-demo  && go mod tidy && go build ./...)
+          (cd examples/gqlgen-demo && go mod tidy && go build ./...)
+
+      - name: Upload coverage
+        if: matrix.go == '1.26'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+          if-no-files-found: error
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+
+  attack-suite:
+    name: Live attack suite (gqlgen-demo)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Start demo server
+        working-directory: examples/gqlgen-demo
+        run: |
+          go mod tidy
+          nohup go run server.go > /tmp/shield_server.log 2>&1 &
+          for i in {1..30}; do
+            curl -sf http://localhost:8080/health && break
+            sleep 1
+          done
+      - name: Fire 8 CWE attack vectors
+        run: bash examples/gqlgen-demo/attacks.sh
+      - name: Server log on failure
+        if: failure()
+        run: cat /tmp/shield_server.log || true
