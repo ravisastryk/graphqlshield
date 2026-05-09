@@ -53,20 +53,37 @@ jobs:
           if-no-files-found: error
 
   lint:
-    name: golangci-lint
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - name: lint
+
+      - name: Run golangci-lint
         uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9
         with:
-          # v2.x is built with Go 1.26+ (v1.x was Go 1.24 → fails on `go 1.26` modules).
-          version: v2.5.0
+          # v2.11.2 is built with Go 1.26 — older v2.x (e.g. v2.5.0 on Go 1.25,
+          # v1.64.x on Go 1.24) fail with `language version used to build
+          # golangci-lint is lower than the targeted Go version`.
+          version: v2.11.2
           args: --timeout=5m
+
+      - name: Check gofmt
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Code is not formatted. Run 'gofmt -w .'"
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: Check go mod tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
 
   attack-suite:
     name: Live attack suite (gqlgen-demo)

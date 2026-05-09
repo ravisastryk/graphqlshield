@@ -52,7 +52,7 @@ func main() {
 
 	gqlHandler := handler.NewDefaultServer(newSchema()) // ← unchanged gqlgen line
 
-	s := shield.New(                                    // ← new: configure shield
+	s := shield.New( // ← new: configure shield
 		shield.WithMaxDepth(5),
 		shield.WithBlockIntrospection(),
 		shield.WithBlockSensitiveFields("token", "password", "ssn"),
@@ -62,8 +62,8 @@ func main() {
 	)
 
 	mux := http.NewServeMux()
-	mux.Handle("/graphql", s.Wrap(gqlHandler))          // ← new: the ONE line wrap
-	mux.HandleFunc("/playground", playgroundHandler)    // ← named-example tabs
+	mux.Handle("/graphql", s.Wrap(gqlHandler))       // ← new: the ONE line wrap
+	mux.HandleFunc("/playground", playgroundHandler) // ← named-example tabs
 	mux.HandleFunc("/health", healthHandler)
 
 	printBanner(port)
