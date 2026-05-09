@@ -3,6 +3,7 @@
 > **CWE-aware defence-in-depth middleware for Go GraphQL APIs.**  
 > Wraps any [`gqlgen`](https://github.com/99designs/gqlgen) handler in **one line**.
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/ravisastryk/graphqlshield.svg)](https://pkg.go.dev/github.com/ravisastryk/graphqlshield)
 [![Go 1.26](https://img.shields.io/badge/go-1.26.2-00acd7.svg?style=flat-square)](https://go.dev/doc/go1.26)
 [![Go Report Card](https://goreportcard.com/badge/github.com/ravisastryk/graphqlshield?style=flat-square)](https://goreportcard.com/report/github.com/ravisastryk/graphqlshield)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
