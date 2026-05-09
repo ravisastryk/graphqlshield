@@ -61,7 +61,7 @@ func parseCryptoguardOutput(out string) []Finding {
 		findings []Finding
 		cur      Finding
 	)
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if m := sevRE.FindStringSubmatch(line); m != nil {
 			if cur.Severity != "" {
 				findings = append(findings, cur)
@@ -131,7 +131,7 @@ func scanFile(path string) ([]Finding, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var findings []Finding
 	sc := bufio.NewScanner(f)
