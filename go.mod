@@ -2,4 +2,4 @@ module github.com/ravisastryk/graphqlshield
 
 go 1.26
 
-require github.com/ravisastryk/go-safeinput v1.0.1
+require github.com/ravisastryk/go-safeinput v1.0.2

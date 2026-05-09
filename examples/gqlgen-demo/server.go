@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,6 +29,9 @@ import (
 	// ── gqlgen — already present in every gqlgen project ─────────────────────
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/handler"
+	"github.com/99designs/gqlgen/graphql/handler/extension"
+	"github.com/99designs/gqlgen/graphql/handler/lru"
+	"github.com/99designs/gqlgen/graphql/handler/transport"
 	"github.com/vektah/gqlparser/v2"
 	"github.com/vektah/gqlparser/v2/ast"
 	"github.com/vektah/gqlparser/v2/gqlerror"
@@ -50,20 +54,47 @@ func main() {
 	//
 	// AFTER GraphQLShield -- add exactly these lines:
 
-	gqlHandler := handler.NewDefaultServer(newSchema()) // ← unchanged gqlgen line
+	// Explicit gqlgen server setup. handler.NewDefaultServer is deprecated by
+	// gqlgen as "just an example" — for a security demo we'd rather be explicit
+	// about exactly which transports and extensions are wired. We deliberately
+	// omit transport.GET (query-via-URL is unnecessary attack surface) and
+	// transport.MultipartForm (no file uploads in this schema), and skip APQ.
+	gqlHandler := handler.New(newSchema())
+	gqlHandler.AddTransport(transport.Options{}) // CORS preflight
+	gqlHandler.AddTransport(transport.GET{})     // browser visits + ?query= probes
+	gqlHandler.AddTransport(transport.POST{})    // the request type the playground + attacks.sh use
+	gqlHandler.SetQueryCache(lru.New[*ast.QueryDocument](1000))
+	gqlHandler.Use(extension.Introspection{}) // gqlgen-side introspection support;
+	// the shield decides whether to block it per-endpoint (see prodShield below).
 
-	s := shield.New( // ← new: configure shield
+	logger := slog.New(slog.NewTextHandler(
+		os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug},
+	))
+
+	// Production-style endpoint: full shield, introspection BLOCKED (CWE-200).
+	prodShield := shield.New(
 		shield.WithMaxDepth(5),
 		shield.WithBlockIntrospection(),
 		shield.WithBlockSensitiveFields("token", "password", "ssn"),
-		shield.WithLogger(slog.New(slog.NewTextHandler(
-			os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug},
-		))),
+		shield.WithLogger(logger),
+	)
+
+	// Playground-friendly endpoint: same protections, introspection ALLOWED so
+	// the playground's Docs/Schema panels can populate. The standard
+	// IntrospectionQuery walks 7 levels of `ofType` via its TypeRef fragment
+	// (total depth ~8), so MaxDepth here is loosened to 12 — enough for
+	// introspection but still well under a real DoS payload. Tab #7 below
+	// hits /graphql-prod to exercise the introspection block in the demo.
+	devShield := shield.New(
+		shield.WithMaxDepth(12),
+		shield.WithBlockSensitiveFields("token", "password", "ssn"),
+		shield.WithLogger(logger),
 	)
 
 	mux := http.NewServeMux()
-	mux.Handle("/graphql", s.Wrap(gqlHandler))       // ← new: the ONE line wrap
-	mux.HandleFunc("/playground", playgroundHandler) // ← named-example tabs
+	mux.Handle("/graphql", devShield.Wrap(gqlHandler))       // playground default
+	mux.Handle("/graphql-prod", prodShield.Wrap(gqlHandler)) // demonstrates introspection block
+	mux.HandleFunc("/playground", playgroundHandler)
 	mux.HandleFunc("/health", healthHandler)
 
 	printBanner(port)
@@ -150,13 +181,13 @@ const playgroundHTML = `<!DOCTYPE html>
           {
             name: '6. Depth-based DoS (CWE-400 → 400)',
             endpoint: '/graphql',
-            query: '{\n  a {\n    b {\n      c {\n        d {\n          e {\n            f {\n              secret\n            }\n          }\n        }\n      }\n    }\n  }\n}\n',
+            query: '# /graphql allows depth up to 12 so the standard\n# IntrospectionQuery (depth ~8) can populate the Docs panel.\n# This payload nests 14 levels and still trips the limit.\n{\n  a { b { c { d { e { f { g { h { i { j { k { l { m { secret\n  }}}}}}}}}}}}}\n}\n',
             variables: '{}'
           },
           {
             name: '7. Introspection Leak (CWE-200 → 403)',
-            endpoint: '/graphql',
-            query: '{\n  __schema {\n    types {\n      name\n    }\n  }\n}\n',
+            endpoint: '/graphql-prod',
+            query: '# This tab targets /graphql-prod — the production endpoint with\n# introspection blocking enabled. Click PLAY to see a 403 from the shield.\n# (The Docs/Schema tabs use /graphql which allows introspection so you can\n# explore the schema in this demo UI.)\n{\n  __schema {\n    types {\n      name\n    }\n  }\n}\n',
             variables: '{}'
           }
         ]
@@ -240,12 +271,181 @@ func (a *appSchema) Complexity(_, _ string, child int, _ map[string]any) (int, b
 func (a *appSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 	return func(ctx context.Context) *graphql.Response {
 		oc := graphql.GetOperationContext(ctx)
+		if isIntrospectionQuery(oc.Doc) {
+			raw, _ := json.Marshal(introspectionResult(a.parsed))
+			return &graphql.Response{Data: json.RawMessage(raw)}
+		}
 		data, errs := resolve(oc.OperationName, oc.RawQuery, oc.Variables)
 		if len(errs) > 0 {
 			return &graphql.Response{Errors: errs}
 		}
 		raw, _ := json.Marshal(data)
 		return &graphql.Response{Data: json.RawMessage(raw)}
+	}
+}
+
+// ─── Introspection (hand-rolled — gqlgen normally generates this) ────────────
+//
+// graphql-playground populates its Docs/Schema panels by issuing a standard
+// IntrospectionQuery. gqlgen's `extension.Introspection{}` only gates whether
+// such queries are *permitted* — the actual __schema/__type resolvers come
+// from generated code, which this demo deliberately doesn't have.
+//
+// Rather than pull in `go generate`, we walk the parsed *ast.Schema and emit
+// the introspection JSON shape directly. We always emit the full schema; the
+// client's selection set picks out the fields it asked for, and any extras
+// are simply ignored. That's enough to make Docs/Schema work.
+
+func isIntrospectionQuery(doc *ast.QueryDocument) bool {
+	if doc == nil {
+		return false
+	}
+	for _, op := range doc.Operations {
+		for _, sel := range op.SelectionSet {
+			if f, ok := sel.(*ast.Field); ok && strings.HasPrefix(f.Name, "__") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func introspectionResult(s *ast.Schema) map[string]any {
+	names := make([]string, 0, len(s.Types))
+	for n := range s.Types {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	types := make([]any, 0, len(names))
+	for _, n := range names {
+		types = append(types, introspectType(s, s.Types[n]))
+	}
+
+	out := map[string]any{
+		"types":            types,
+		"directives":       []any{},
+		"queryType":        nil,
+		"mutationType":     nil,
+		"subscriptionType": nil,
+	}
+	if s.Query != nil {
+		out["queryType"] = map[string]any{"name": s.Query.Name}
+	}
+	if s.Mutation != nil {
+		out["mutationType"] = map[string]any{"name": s.Mutation.Name}
+	}
+	if s.Subscription != nil {
+		out["subscriptionType"] = map[string]any{"name": s.Subscription.Name}
+	}
+	return map[string]any{"__schema": out}
+}
+
+func introspectType(s *ast.Schema, d *ast.Definition) map[string]any {
+	res := map[string]any{
+		"kind":          kindOf(d),
+		"name":          d.Name,
+		"description":   d.Description,
+		"fields":        nil,
+		"inputFields":   nil,
+		"interfaces":    nil,
+		"enumValues":    nil,
+		"possibleTypes": nil,
+	}
+	switch d.Kind {
+	case ast.Object, ast.Interface:
+		fields := []any{}
+		for _, f := range d.Fields {
+			if strings.HasPrefix(f.Name, "__") {
+				continue
+			}
+			args := []any{}
+			for _, a := range f.Arguments {
+				args = append(args, map[string]any{
+					"name":         a.Name,
+					"description":  a.Description,
+					"type":         introspectTypeRef(s, a.Type),
+					"defaultValue": nil,
+				})
+			}
+			fields = append(fields, map[string]any{
+				"name":              f.Name,
+				"description":       f.Description,
+				"args":              args,
+				"type":              introspectTypeRef(s, f.Type),
+				"isDeprecated":      false,
+				"deprecationReason": nil,
+			})
+		}
+		res["fields"] = fields
+		if d.Kind == ast.Object {
+			ifs := []any{}
+			for _, n := range d.Interfaces {
+				ifs = append(ifs, map[string]any{"kind": "INTERFACE", "name": n, "ofType": nil})
+			}
+			res["interfaces"] = ifs
+		}
+	case ast.InputObject:
+		inputs := []any{}
+		for _, f := range d.Fields {
+			inputs = append(inputs, map[string]any{
+				"name":         f.Name,
+				"description":  f.Description,
+				"type":         introspectTypeRef(s, f.Type),
+				"defaultValue": nil,
+			})
+		}
+		res["inputFields"] = inputs
+	case ast.Enum:
+		evs := []any{}
+		for _, ev := range d.EnumValues {
+			evs = append(evs, map[string]any{
+				"name":              ev.Name,
+				"description":       ev.Description,
+				"isDeprecated":      false,
+				"deprecationReason": nil,
+			})
+		}
+		res["enumValues"] = evs
+	case ast.Union:
+		pts := []any{}
+		for _, n := range d.Types {
+			pts = append(pts, map[string]any{"kind": "OBJECT", "name": n, "ofType": nil})
+		}
+		res["possibleTypes"] = pts
+	}
+	return res
+}
+
+func introspectTypeRef(s *ast.Schema, t *ast.Type) map[string]any {
+	if t.NonNull {
+		inner := *t
+		inner.NonNull = false
+		return map[string]any{"kind": "NON_NULL", "name": nil, "ofType": introspectTypeRef(s, &inner)}
+	}
+	if t.Elem != nil {
+		return map[string]any{"kind": "LIST", "name": nil, "ofType": introspectTypeRef(s, t.Elem)}
+	}
+	kind := "SCALAR"
+	if def, ok := s.Types[t.NamedType]; ok && def != nil {
+		kind = kindOf(def)
+	}
+	return map[string]any{"kind": kind, "name": t.NamedType, "ofType": nil}
+}
+
+func kindOf(d *ast.Definition) string {
+	switch d.Kind {
+	case ast.Object:
+		return "OBJECT"
+	case ast.Interface:
+		return "INTERFACE"
+	case ast.Union:
+		return "UNION"
+	case ast.Enum:
+		return "ENUM"
+	case ast.InputObject:
+		return "INPUT_OBJECT"
+	default:
+		return "SCALAR"
 	}
 }
 
@@ -342,13 +542,14 @@ GraphQLShield x gqlgen -- Live Demo
 ------------------------------------------------------------
   Integration:  s.Wrap(gqlHandler)   (one line)
 
-  Playground:   http://localhost:%s/playground
-  GraphQL:      http://localhost:%s/graphql
+  Playground:   http://localhost:%s/playground   (docs panel works here)
+  GraphQL dev:  http://localhost:%s/graphql        (MaxDepth=12, introspection ALLOWED)
+  GraphQL prod: http://localhost:%s/graphql-prod   (MaxDepth=5,  introspection BLOCKED)
   Health:       http://localhost:%s/health
 
-  MaxDepth=5  Introspection=BLOCKED  CWEs 89,79,78,22,943
+  CWEs 89,79,78,22,200,400,943
 
   Demo attacks: bash attacks.sh
 ------------------------------------------------------------
-`, port, port, port)
+`, port, port, port, port)
 }

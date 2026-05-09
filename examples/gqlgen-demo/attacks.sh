@@ -5,15 +5,16 @@
 set -euo pipefail
 
 HOST=${1:-localhost:8080}
-BASE="http://$HOST/graphql"
+DEV="http://$HOST/graphql"        # introspection allowed (playground-friendly)
+PROD="http://$HOST/graphql-prod"  # introspection blocked
 PASS=0; FAIL=0
 
 fire() {
-  local label="$1" expect="$2" body="$3"
+  local label="$1" expect="$2" body="$3" url="${4:-$DEV}"
   echo ""
   printf '  %-55s' "$label"
   code=$(curl -s -o /tmp/shield_resp -w "%{http_code}" \
-    -X POST "$BASE" -H "Content-Type: application/json" -d "$body")
+    -X POST "$url" -H "Content-Type: application/json" -d "$body")
   resp=$(cat /tmp/shield_resp)
   if [ "$code" = "$expect" ]; then
     printf 'PASS  HTTP %s\n' "$code"; PASS=$((PASS+1))
@@ -47,13 +48,17 @@ fire "4/8  Path Traversal         (CWE-22  -> 400)" "400" \
 fire "5/8  NoSQL Injection        (CWE-943 -> 400)" "400" \
 '{"operationName":"FindUser","query":"query FindUser($filter:String!){findUser(filter:$filter){id}}","variables":{"filter":"{\"$ne\":null}"}}'
 
-# 6. Depth DoS (CWE-400) — depth 6 > limit 5
+# 6. Depth DoS (CWE-400) — depth 14 > /graphql limit (12).
+#    /graphql's depth limit is loosened to 12 so the playground's standard
+#    IntrospectionQuery (depth ~8) can populate the Docs panel; this payload
+#    nests deep enough to trip it anyway. /graphql-prod still uses MaxDepth=5.
 fire "6/8  Depth-based DoS        (CWE-400 -> 400)" "400" \
-'{"query":"{ a { b { c { d { e { f { secret } } } } } } }"}'
+'{"query":"{ a { b { c { d { e { f { g { h { i { j { k { l { m { secret } } } } } } } } } } } } } }"}'
 
-# 7. Introspection (CWE-200)
+# 7. Introspection (CWE-200) — must hit the prod endpoint where introspection is blocked
 fire "7/8  Introspection leak     (CWE-200 -> 403)" "403" \
-'{"query":"{ __schema { types { name } } }"}'
+'{"query":"{ __schema { types { name } } }"}' \
+"$PROD"
 
 # 8. Legitimate request — MUST PASS
 fire "8/8  Legitimate register    (clean   -> 200)" "200" \
