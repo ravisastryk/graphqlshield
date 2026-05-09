@@ -61,9 +61,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - uses: golangci/golangci-lint-action@v6
+      - name: lint
+        uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9
         with:
-          version: latest
+          # v2.x is built with Go 1.26+ (v1.x was Go 1.24 → fails on `go 1.26` modules).
+          version: v2.5.0
           args: --timeout=5m
 
   attack-suite:
