@@ -150,21 +150,41 @@ func (s *Shield) Wrap(next http.Handler) http.Handler {
 
 // ─── block helper ────────────────────────────────────────────────────────────
 
+// block writes a standard GraphQL error response and logs the decision.
+//
+// The response body matches the GraphQL spec's "errors" shape and carries two
+// pieces of metadata in extensions:
+//
+//   - code     — the CWE identifier (e.g. "CWE-89")
+//   - cwe_url  — the MITRE reference URL (e.g. "https://cwe.mitre.org/data/definitions/89.html")
+//
+// URL resolution is delegated to the package-level URLResolver (see errors.go),
+// which is statically loaded by default and pluggable for future dynamic
+// sources via SetURLResolver.
 func (s *Shield) block(w http.ResponseWriter, r *http.Request, status int, cwe *CWEError) {
-	msg, code := "blocked by GraphQLShield", "SHIELD_BLOCKED"
+	msg, code, url := "blocked by GraphQLShield", "SHIELD_BLOCKED", ""
 	if cwe != nil {
-		msg, code = cwe.Error(), cwe.CWE
+		msg, code, url = cwe.Error(), cwe.CWE, cwe.URL()
 	}
 	s.log.Warn("graphqlshield: blocked",
-		"status", status, "cwe", code,
-		"reason", msg, "remote", r.RemoteAddr)
+		"status", status,
+		"cwe", code,
+		"cwe_url", url,
+		"reason", msg,
+		"remote", r.RemoteAddr,
+	)
+
+	ext := map[string]string{"code": code}
+	if url != "" {
+		ext["cwe_url"] = url
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"errors": []map[string]any{{
 			"message":    msg,
-			"extensions": map[string]string{"code": code},
+			"extensions": ext,
 		}},
 	})
 }
