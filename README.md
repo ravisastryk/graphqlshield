@@ -151,15 +151,28 @@ All Layer 2 CWE checks (89 · 79 · 78 · 22 · 943) are **always on** — no co
 
 ## Error responses
 
-Every blocked request returns a standard GraphQL error with a CWE code:
+Every blocked request returns a standard GraphQL error carrying the CWE code
+and a link to its MITRE reference page:
 
 ```json
 {
   "errors": [{
     "message": "[CWE-89] SQL Injection in variable \"name\": SQL injection pattern detected",
-    "extensions": { "code": "CWE-89" }
+    "extensions": {
+      "code": "CWE-89",
+      "cwe_url": "https://cwe.mitre.org/data/definitions/89.html"
+    }
   }]
 }
+```
+
+`cwe_url` is resolved from a statically compiled table (no network call, works
+offline). To serve URLs from an internal mirror or a live MITRE feed instead,
+implement `URLResolver` and install it at startup with `SetURLResolver(...)` —
+the `Shield` itself stays synchronous and side-effect-free:
+
+```go
+graphqlshield.SetURLResolver(myResolver) // pass nil to restore the built-in table
 ```
 
 ---
@@ -168,20 +181,20 @@ Every blocked request returns a standard GraphQL error with a CWE code:
 
 | CWE | Vulnerability | Layer | Powered by |
 |---|---|---|---|
-| CWE-400 | Resource Exhaustion (depth DoS) | Static | stdlib |
-| CWE-200 | Sensitive Data Exposure (introspection) | Static | stdlib |
-| CWE-89 | SQL Injection | Runtime | go-safeinput |
-| CWE-79 | Cross-Site Scripting | Runtime | go-safeinput |
-| CWE-78 | OS Command Injection | Runtime | go-safeinput |
-| CWE-22 | Path Traversal | Runtime | go-safeinput |
-| CWE-943 | NoSQL Injection | Runtime | built-in regexp |
-| CWE-327 | Weak Cryptographic Algorithm | Audit | cryptoguard-go |
-| CWE-328 | Use of Weak Hash | Audit | cryptoguard-go |
-| CWE-798 | Use of Hard-coded Credentials | Audit | cryptoguard-go + built-in |
-| CWE-338 | Insecure Randomness | Audit | cryptoguard-go |
-| CWE-321 | Hardcoded Cryptographic Key | Audit | cryptoguard-go |
-| CWE-862 | Missing Authorization | Audit | cryptoguard-go |
-| CWE-601 | Open Redirect | Runtime | built-in |
+| [CWE-400](https://cwe.mitre.org/data/definitions/400.html) | Resource Exhaustion (depth DoS) | Static | stdlib |
+| [CWE-200](https://cwe.mitre.org/data/definitions/200.html) | Sensitive Data Exposure (introspection) | Static | stdlib |
+| [CWE-89](https://cwe.mitre.org/data/definitions/89.html) | SQL Injection | Runtime | go-safeinput |
+| [CWE-79](https://cwe.mitre.org/data/definitions/79.html) | Cross-Site Scripting | Runtime | go-safeinput |
+| [CWE-78](https://cwe.mitre.org/data/definitions/78.html) | OS Command Injection | Runtime | go-safeinput |
+| [CWE-22](https://cwe.mitre.org/data/definitions/22.html) | Path Traversal | Runtime | go-safeinput |
+| [CWE-943](https://cwe.mitre.org/data/definitions/943.html) | NoSQL Injection | Runtime | built-in regexp |
+| [CWE-327](https://cwe.mitre.org/data/definitions/327.html) | Weak Cryptographic Algorithm | Audit | cryptoguard-go |
+| [CWE-328](https://cwe.mitre.org/data/definitions/328.html) | Use of Weak Hash | Audit | cryptoguard-go |
+| [CWE-798](https://cwe.mitre.org/data/definitions/798.html) | Use of Hard-coded Credentials | Audit | cryptoguard-go + built-in |
+| [CWE-338](https://cwe.mitre.org/data/definitions/338.html) | Insecure Randomness | Audit | cryptoguard-go |
+| [CWE-321](https://cwe.mitre.org/data/definitions/321.html) | Hardcoded Cryptographic Key | Audit | cryptoguard-go |
+| [CWE-862](https://cwe.mitre.org/data/definitions/862.html) | Missing Authorization | Audit | cryptoguard-go |
+| [CWE-601](https://cwe.mitre.org/data/definitions/601.html) | Open Redirect | Runtime | built-in |
 
 ---
 
